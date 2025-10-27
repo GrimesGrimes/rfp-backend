@@ -29,11 +29,19 @@ async function createAndPublishRfp(ownerId: string, title: string, content: stri
 
   // 2) Sección única (puedes trocear si quieres)
   const section = await prisma.rfpSection.create({
-    data: { id: cuid(), rfpId: rfp.id, index: 0, heading: "Contenido", content },
+    data: { id: cuid(), rfpId: rfp.id, index: 0, content },
   });
 
   // 3) Embedding (usa tu pipeline actual)
-  const vec = await embedText(content);
+  const emb: any = await embedText(content);
+// Accept shapes: number[] OR { vectors:number[][], dim?:number }
+const vector: number[] = Array.isArray(emb)
+  ? emb as number[]
+  : Array.isArray(emb?.vectors) && Array.isArray(emb.vectors[0])
+    ? emb.vectors[0] as number[]
+    : [];
+const dim = typeof emb?.dim === "number" ? emb.dim : (Array.isArray(vector) ? vector.length : 0);
+const vecLiteral = `[${vector.join(",")}]`;
   await prisma.$executeRaw`
     INSERT INTO "RfpEmbedding" 
     ("id", "sectionId", "model", "dim", "chunkIndex", "vector", "createdAt")
@@ -41,9 +49,9 @@ async function createAndPublishRfp(ownerId: string, title: string, content: stri
       ${cuid()},
       ${section.id},
       ${process.env.OLLAMA_EMBED_MODEL || process.env.OPENAI_EMBED_MODEL || "unknown"},
-      ${vec.length},
+      ${dim},
       0,
-      ${vec}::vector,
+      ${vecLiteral}::vector,
       NOW()
     )
   `;
