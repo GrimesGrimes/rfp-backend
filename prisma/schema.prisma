@@ -16,11 +16,10 @@ model User {
   id        String   @id @default(cuid())
   email     String   @unique
   name      String?
-  hash      String   @default("") // <-- contraseña hasheada, requerida con default
+  hash      String   @default("")   // ok
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
-
-  rfps Rfp[]
+  updatedAt DateTime @updatedAt      // ← quita @default(now()) si lo tenías
+  rfps      Rfp[]
 }
 
 model Rfp {
@@ -58,7 +57,7 @@ model RfpSection {
   content String
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
+  updatedAt DateTime @updatedAt // <-- sin @default(now())
 
   embeddings RfpEmbedding[]
 
