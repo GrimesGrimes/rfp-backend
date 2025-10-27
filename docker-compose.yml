@@ -1,0 +1,22 @@
+services:
+  db:
+    image: ankane/pgvector:latest
+    container_name: rfp_pg
+    environment:
+      POSTGRES_USER: rfp
+      POSTGRES_PASSWORD: rfp
+      POSTGRES_DB: rfpdb
+    ports:
+      - "5432:5432"   # si ya tienes un Postgres local ocupando 5432, cambia a "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rfp -d rfpdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+

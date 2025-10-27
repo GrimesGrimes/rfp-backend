@@ -1,0 +1,8 @@
+// === Added by upgrade pack ===
+model AiCache {
+  key       String   @id
+  value     String   // serialized content
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

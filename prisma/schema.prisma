@@ -1,0 +1,204 @@
+// ---------- Prisma Client ----------
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ---------- Datasource ----------
+datasource db {
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+}
+
+// ---------- Models base ----------
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  hash      String   @default("") // <-- contraseña hasheada, requerida con default
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  rfps Rfp[]
+}
+
+model Rfp {
+  id      String @id @default(cuid())
+  title   String
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  // payload del brief: objetivos, dolores, volumen, integraciones, etc.
+  dataJson    Json?
+  isPublished Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  // relaciones existentes
+  sections   RfpSection[]
+  embeddings RfpEmbedding[]
+
+  // NUEVAS relaciones necesarias para tu flujo
+  modules      Module[]
+  requirements Requirement[]
+
+  // opcional si luego generas checklist persistente
+  checklistItems ChecklistItem[]
+
+  @@index([ownerId])
+}
+
+model RfpSection {
+  id    String @id @default(cuid())
+  rfpId String
+  rfp   Rfp    @relation(fields: [rfpId], references: [id], onDelete: Cascade)
+
+  index   Int // índice del chunk
+  content String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  embeddings RfpEmbedding[]
+
+  @@index([rfpId])
+  @@index([index])
+}
+
+model RfpEmbedding {
+  id        String     @id @default(cuid())
+  sectionId String
+  section   RfpSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  // metadata del embedding usado
+  model      String
+  dim        Int
+  chunkIndex Int
+
+  // pgvector
+  vector Unsupported("vector")
+
+  createdAt DateTime @default(now())
+  Rfp       Rfp?     @relation(fields: [rfpId], references: [id])
+  rfpId     String?
+
+  @@index([model])
+  @@index([sectionId])
+}
+
+// ---------- MoSCoW + módulos + requisitos ----------
+
+enum Moscow {
+  wont
+  would
+  could
+  should
+}
+
+model Module {
+  id    String @id @default(cuid())
+  rfpId String
+  rfp   Rfp    @relation(fields: [rfpId], references: [id], onDelete: Cascade)
+
+  key         String // p.ej. "auth", "integraciones", "reporting"
+  name        String
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  requirements Requirement[]
+
+  @@unique([rfpId, key]) // no repitas el mismo módulo en un RFP
+  @@index([rfpId])
+}
+
+model Requirement {
+  id    String @id @default(cuid())
+  rfpId String
+  rfp   Rfp    @relation(fields: [rfpId], references: [id], onDelete: Cascade)
+
+  moduleId String?
+  module   Module? @relation(fields: [moduleId], references: [id], onDelete: SetNull)
+
+  title    String
+  body     String
+  type     String // "functional" | "nonfunctional"
+  category Moscow @default(should) // MoSCoW
+  status   String @default("active") // "active" | "archived"
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([rfpId, title, type], name: "unique_per_rfp")
+  @@index([rfpId])
+  @@index([moduleId])
+  @@index([category])
+  @@index([status])
+}
+
+model ChecklistItem {
+  id    String @id @default(cuid())
+  rfpId String
+  rfp   Rfp    @relation(fields: [rfpId], references: [id], onDelete: Cascade)
+
+  text    String
+  section String // "Requisitos Funcionales", "No Funcionales", etc.
+  done    Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([rfpId])
+  @@index([section])
+}
+
+// ---------- Biblioteca opcional para sugerencias ----------
+
+model LibraryModule {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+
+  requirements LibraryRequirement[]
+
+  @@index([key])
+}
+
+model LibraryRequirement {
+  id        String        @id @default(cuid())
+  moduleId  String
+  module    LibraryModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  type      String // "functional" | "nonfunctional"
+  tags      String[]      @default([])
+  createdAt DateTime      @default(now())
+
+  embeddings LibraryRequirementEmbedding[]
+}
+
+model LibraryRequirementEmbedding {
+  id         String                @id @default(cuid())
+  reqId      String
+  req        LibraryRequirement    @relation(fields: [reqId], references: [id], onDelete: Cascade)
+  model      String
+  dim        Int
+  chunkIndex Int
+  vector     Unsupported("vector")
+  createdAt  DateTime              @default(now())
+
+  @@index([model])
+  @@index([reqId])
+}
+
+model AiCache {
+  key       String   @id
+  value     String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

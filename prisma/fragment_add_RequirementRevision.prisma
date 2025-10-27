@@ -1,0 +1,14 @@
+// === Added by upgrade pack ===
+// Keep a lightweight edit history per requirement
+model RequirementRevision {
+  id            String   @id @default(cuid())
+  requirementId String
+  requirement   Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  title         String
+  body          String
+  type          String
+  category      String
+  createdAt     DateTime @default(now())
+
+  @@index([requirementId, createdAt])
+}
