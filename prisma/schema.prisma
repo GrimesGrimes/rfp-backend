@@ -114,29 +114,47 @@ model Module {
 }
 
 model Requirement {
-  id    String @id @default(cuid())
-  rfpId String
-  rfp   Rfp    @relation(fields: [rfpId], references: [id], onDelete: Cascade)
-
-  moduleId String?
-  module   Module? @relation(fields: [moduleId], references: [id], onDelete: SetNull)
-
-  title    String
-  body     String
-  type     String // "functional" | "nonfunctional"
-  category Moscow @default(should) // MoSCoW
-  status   String @default("active") // "active" | "archived"
-
+  id         String   @id @default(cuid())
+  rfpId      String
+  rfp        Rfp      @relation(fields: [rfpId], references: [id], onDelete: Cascade)
+  moduleId   String?
+  module     Module?  @relation(fields: [moduleId], references: [id])
+  title      String
+  body       String?
+  type       String           // "functional" | "nonfunctional"
+  category   Moscow
+  status     String   @default("active")
   createdById String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @default(now()) @updatedAt
 
-  @@unique([rfpId, title, type], name: "unique_per_rfp")
+  embeddings RequirementEmbedding[]   // <— relación de retorno
+
   @@index([rfpId])
   @@index([moduleId])
   @@index([category])
   @@index([status])
+  @@unique([rfpId, title, type])      // <— ESTA define la clave compuesta
 }
+
+
+model RequirementEmbedding {
+  id        String   @id @default(cuid())
+  reqId     String
+  req       Requirement @relation(fields: [reqId], references: [id], onDelete: Cascade)
+
+  model     String
+  dim      Int
+  // Usa el mismo tipo que ya usas en RfpEmbedding (si usas Unsupported, mantenlo igual):
+  vector    Unsupported("vector(1536)")
+  // Si tu RfpEmbedding usa vector(1536) fijo, puedes igualar la dimensión aquí.
+
+  createdAt DateTime @default(now())
+
+  @@index([reqId])
+  @@index([model])
+}
+
 
 model ChecklistItem {
   id    String @id @default(cuid())

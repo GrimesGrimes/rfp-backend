@@ -182,9 +182,16 @@ router.post("/bulk-upsert", async (req: Request, res: Response) => {
   const ops = items.map((it) => {
     const moduleId = it.moduleKey ? byRfp.get(it.rfpId)?.get(it.moduleKey) ?? null : null;
     return prisma.requirement.upsert({
-      where: { unique_per_rfp: { rfpId: it.rfpId, title: it.title, type: it.type } },
+      where: { rfpId_title_type: { rfpId: it.rfpId, title: it.title, type: it.type } },
       update: { body: it.body, category: it.category, moduleId },
-      create: { rfpId: it.rfpId, title: it.title, body: it.body, type: it.type, category: it.category, moduleId },
+      create: {
+        rfpId: it.rfpId,
+        title: it.title,
+        body: it.body,
+        type: it.type,
+        category: it.category,
+        moduleId,
+      },
     });
   });
 
