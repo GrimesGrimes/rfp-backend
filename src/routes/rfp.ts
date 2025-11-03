@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { embedText } from "../lib/embedding";
 import { randomUUID } from "crypto";
+import { requireAuth } from "../middleware/auth";
 
 const router = Router();
 
@@ -28,7 +29,7 @@ function ensureAuth(req: Request, res: Response): string | undefined {
 
 /** ==== Crear RFP ==== */
 // POST /rfp
-router.post("/", async (req: Request, res: Response) => {
+router.post("/", requireAuth, async (req: Request, res: Response) => {
   try {
     const userId = ensureAuth(req, res);
     if (!userId) return;
@@ -75,9 +76,55 @@ router.post("/", async (req: Request, res: Response) => {
   }
 });
 
+// GET /rfp/:id/export  -> devuelve Markdown del RFP (secciones + MoSCoW)
+router.get("/:id/export", requireAuth, async (req, res) => {
+  const id = String(req.params.id || "").trim();
+  if (!id) return res.status(400).send("id requerido");
+
+  const rfp = await prisma.rfp.findUnique({
+    where: { id },
+    include: {
+      sections: { orderBy: { index: "asc" } },
+      requirements: {
+        orderBy: [{ category: "asc" }, { createdAt: "asc" }],
+        select: { title: true, type: true, category: true, body: true },
+      },
+    },
+  });
+  if (!rfp) return res.status(404).send("rfp no encontrado");
+
+  const groups: Record<"wont"|"would"|"could"|"should", any[]> = { wont: [], would: [], could: [], should: [] };
+  for (const r of rfp.requirements) {
+    const k = (r.category || "should") as "wont"|"would"|"could"|"should";
+    groups[k].push(r);
+  }
+
+  let md = `# ${rfp.title}\n\n`;
+  md += `**Publicado:** ${rfp.isPublished ? "Sí" : "No"}  \n\n`;
+
+  md += `## Secciones\n\n`;
+  for (const s of rfp.sections) {
+    md += `### Sección ${s.index}\n${(s.content || "").trim()}\n\n`;
+  }
+
+  md += `## Checklist (MoSCoW)\n\n`;
+  for (const key of ["should","could","would","wont"] as const) {
+    md += `### ${key.toUpperCase()}\n`;
+    for (const r of groups[key]) {
+      md += `- **${r.title}** (${r.type})\n`;
+      if (r.body) md += `  - ${r.body.trim()}\n`;
+    }
+    md += `\n`;
+  }
+
+  res.setHeader("content-type", "text/markdown; charset=utf-8");
+  res.send(md);
+});
+
+
 /** ==== Listar RFPs ==== */
 // GET /rfp?scope=mine|all (por defecto: mine)
-router.get("/", async (req: Request, res: Response) => {
+router.get("/", requireAuth, async (req: Request, res: Response) => {
   const userId = ensureAuth(req, res);
   if (!userId) return;
 
@@ -92,7 +139,7 @@ router.get("/", async (req: Request, res: Response) => {
 
 /** ==== Obtener un RFP por id ==== */
 // GET /rfp/:id
-router.get("/:id", async (req: Request, res: Response) => {
+router.get("/:id", requireAuth, async (req: Request, res: Response) => {
   const userId = ensureAuth(req, res);
   if (!userId) return;
 

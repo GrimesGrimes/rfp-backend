@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { suggestModules } from "../services/ai";
-
+import { requireAuth } from "../middleware/auth";
 
 const router = Router();
 
@@ -16,14 +16,14 @@ const AddModules = z.object({
 });
 
 // GET /modules/:rfpId
-router.get("/:rfpId", async (req: Request, res: Response) => {
+router.get("/:rfpId", requireAuth, async (req, res) => {
   const { rfpId } = req.params;
   const list = await prisma.module.findMany({ where: { rfpId } });
   res.json(list);
 });
 
 // POST /modules
-router.post("/", async (req: Request, res: Response) => {
+router.post("/", requireAuth, async (req: Request, res: Response) => {
   const body = AddModules.parse(req.body);
   const created = await prisma.$transaction(
     body.selected.map(m =>
@@ -34,13 +34,13 @@ router.post("/", async (req: Request, res: Response) => {
 });
 
 // DELETE /modules/:moduleId
-router.delete("/:moduleId", async (req: Request, res: Response) => {
+router.delete("/:moduleId", requireAuth, async (req: Request, res: Response) => {
   await prisma.module.delete({ where: { id: req.params.moduleId } });
   res.json({ ok: true });
 });
 
 // POST /modules/:rfpId/suggest
-router.post("/:rfpId/suggest", async (req: Request, res: Response) => {
+router.post("/:rfpId/suggest", requireAuth, async (req: Request, res: Response) => {
   const { rfpId } = req.params;
 
   const rfp = await prisma.rfp.findUnique({ where: { id: rfpId }});

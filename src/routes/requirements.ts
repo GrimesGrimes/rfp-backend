@@ -3,8 +3,60 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { isMoscow } from "../lib/moscow";
 import { suggestRequirements } from "../services/ai";
+import { requireAuth } from "../middleware/auth";
 
 const router = Router();
+
+// GET /requirements/checklist?rfpId=...
+// Devuelve items agrupados por MoSCoW: wont/would/could/should
+router.get("/checklist", requireAuth, async (req, res) => {
+  try {
+    const rfpId = String(req.query.rfpId || "").trim();
+    if (!rfpId) return res.status(400).json({ error: "rfpId es requerido" });
+
+    const items = await prisma.requirement.findMany({
+      where: { rfpId },
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        title: true,
+        body: true,
+        type: true,      // "functional" | "nonfunctional"
+        status: true,    // si tienes estatus (e.g., "active" | "archived")
+        category: true,  // "wont" | "would" | "could" | "should"
+      },
+    });
+
+    const groups: Record<"wont"|"would"|"could"|"should", any[]> = {
+      wont: [], would: [], could: [], should: []
+    };
+
+    for (const it of items) {
+      const k = (it.category as "wont"|"would"|"could"|"should") || "should";
+      groups[k].push({
+        id: it.id,
+        title: it.title,
+        type: it.type,
+        status: it.status,
+        snippet: (it.body || "").slice(0, 240),
+      });
+    }
+
+    res.json({
+      rfpId,
+      counts: {
+        wont: groups.wont.length,
+        would: groups.would.length,
+        could: groups.could.length,
+        should: groups.should.length,
+      },
+      groups,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "checklist_failed" });
+  }
+});
 
 // New: bulk upsert with idempotencyKey (ensures replays don't duplicate)
 const BulkUpsert = z.object({
@@ -26,6 +78,50 @@ const CreateReq = z.object({
   body: z.string().min(3),
   type: z.enum(["functional","nonfunctional"]),
   category: z.enum(["wont","would","could","should"]).default("should"),
+});
+
+
+// GET /requirements/list?rfpId=...&status=active|archived
+router.get("/list", requireAuth, async (req, res) => {
+  const rfpId = String(req.query.rfpId || "").trim();
+  const status = String(req.query.status || "").trim(); // opcional
+  if (!rfpId) return res.status(400).json({ error: "rfpId es requerido" });
+
+  const where: any = { rfpId };
+  if (status) where.status = status;
+
+  const items = await prisma.requirement.findMany({
+    where,
+    orderBy: [{ createdAt: "asc" }],
+    select: { id: true, title: true, type: true, category: true, status: true, moduleId: true },
+  });
+
+  res.json({ rfpId, count: items.length, items });
+});
+
+// PATCH /requirements/:id
+// body: { category?: "wont"|"would"|"could"|"should", status?: "active"|"archived", title?: string, body?: string, type?: "functional"|"nonfunctional", moduleId?: string|null }
+const PatchRequirement = z.object({
+  title: z.string().min(3).optional(),
+  body: z.string().min(1).optional(),
+  type: z.enum(["functional","nonfunctional"]).optional(),
+  category: z.enum(["wont","would","could","should"]).optional(),
+  status: z.enum(["active","archived"]).optional(),
+  moduleId: z.string().nullable().optional(),
+});
+
+router.patch("/:id", requireAuth, async (req, res) => {
+  const id = String(req.params.id || "").trim();
+  if (!id) return res.status(400).json({ error: "id requerido" });
+
+  const parsed = PatchRequirement.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const data = parsed.data;
+  if (Object.keys(data).length === 0) return res.status(400).json({ error: "sin cambios" });
+
+  const updated = await prisma.requirement.update({ where: { id }, data });
+  res.json({ ok: true, updated });
 });
 
 // GET /requirements/:rfpId
@@ -332,5 +428,23 @@ router.post("/bulk-create", async (req: Request, res: Response) => {
 
   res.status(201).json(created);
 });
+
+// GET /requirements/list?rfpId=...&status=active|archived
+router.get("/list", requireAuth, async (req, res) => {
+  const rfpId = String(req.query.rfpId || "").trim();
+  const status = String(req.query.status || "").trim(); // opcional
+  if (!rfpId) return res.status(400).json({ error: "rfpId es requerido" });
+
+  const where: any = { rfpId };
+  if (status) where.status = status;
+
+  const rows = await prisma.requirement.findMany({
+    where,
+    orderBy: [{ createdAt: "asc" }],
+    select: { id: true, title: true, category: true, status: true, type: true }
+  });
+  res.json({ rfpId, count: rows.length, items: rows });
+});
+
 
 export default router;

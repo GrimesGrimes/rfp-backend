@@ -13,6 +13,23 @@ function headers() {
   return h;
 }
 
+function ensureArray<T>(x: T | T[]): T[] {
+  return Array.isArray(x) ? x : [x];
+}
+
+async function readJSONOrThrow(resp: Response, ctx: string) {
+  const ct = resp.headers.get("content-type") || "";
+  const raw = await resp.text();
+  if (!ct.includes("application/json")) {
+    throw new Error(`[embed:${ctx}] Non-JSON response (status ${resp.status}): ${raw.slice(0, 300)}`);
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error(`[embed:${ctx}] JSON parse failed (status ${resp.status}): ${raw.slice(0, 300)}`);
+  }
+}
+
 export function chunkText(text: string, chunkSize = 800, overlap = 120): string[] {
   const clean = (text || "").replace(/\s+/g, " ").trim();
   if (!clean) return [];
@@ -34,24 +51,62 @@ export function chunkText(text: string, chunkSize = 800, overlap = 120): string[
   return chunks;
 }
 
-export async function embedText(input: string | string[]) {
-  if (!KEY) throw new Error("Missing OPENROUTER_API_KEY");
-  const inputs = Array.isArray(input) ? input : [input];
-  const body = {
-    model: EMBEDDING_MODEL,
-    input: inputs,
-  };
-  const resp = await fetch(`${BASE}/embeddings`, {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify(body),
-  });
-  if (!resp.ok) {
-    const t = await resp.text();
-    throw new Error(`Embeddings error: ${resp.status} ${t}`);
+// Reemplaza SOLAMENTE esta función en src/lib/embedding.ts
+// Reemplaza SOLAMENTE esta función
+export async function embedText(
+  input: string | string[]
+): Promise<{ vectors: number[][]; model: string; dim: number }> {
+  const hdrs = headers();                 // usa tu helper existente
+  const inputs = ensureArray(input);
+
+  // 1) Modelo preferido desde .env (si no existe, probamos fallback)
+  const primary = process.env.EMBEDDING_MODEL || "openai/text-embedding-3-small";
+
+  // 2) Lista de respaldo (sin duplicados)
+  const candidates = Array.from(new Set([
+    primary,
+    "openai/text-embedding-3-small",
+    "openai/text-embedding-3-large",
+    "jinaai/jina-embeddings-v3",
+  ]));
+
+  async function tryModel(model: string) {
+    const resp = await fetch(`${BASE}/embeddings`, {
+      method: "POST",
+      headers: hdrs,
+      body: JSON.stringify({ model, input: inputs }),
+    });
+
+    const json = await readJSONOrThrow(resp, `openrouter:${model}`);
+    if (!resp.ok) {
+      throw new Error(`[embed:openrouter:${model}] HTTP ${resp.status}: ${JSON.stringify(json).slice(0, 300)}`);
+    }
+
+    // OpenAI-like: { data: [{ embedding: number[] }, ...] }
+    const data = Array.isArray(json?.data) ? json.data : [];
+    const vectors: number[][] = data
+      .map((d: any) => d?.embedding)
+      .filter((v: any) => Array.isArray(v));
+
+    if (!vectors.length) throw new Error(`[embed:openrouter:${model}] No embeddings returned`);
+
+    const dim = vectors[0]?.length || 0;
+    return { vectors, model, dim };
   }
-  const json = await resp.json();
-  // OpenRouter sigue el formato OpenAI: data[i].embedding
-  const vectors: number[][] = (json?.data || []).map((d: any) => d.embedding);
-  return { vectors, model: EMBEDDING_MODEL, dim: vectors[0]?.length || 0 };
+
+  let lastErr: unknown;
+  for (const m of candidates) {
+    try {
+      return await tryModel(m);
+    } catch (e: any) {
+      lastErr = e;
+      const msg = String(e?.message || e);
+      // si el modelo no existe (400/404) probamos el siguiente
+      if (/does not exist|Unknown model|HTTP\s+400|HTTP\s+404/i.test(msg)) continue;
+      throw e;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
+
+
