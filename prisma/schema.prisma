@@ -16,9 +16,9 @@ model User {
   id        String   @id @default(cuid())
   email     String   @unique
   name      String?
-  hash      String   @default("")   // ok
+  hash      String   @default("") // ok
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt      // ← quita @default(now()) si lo tenías
+  updatedAt DateTime @updatedAt // ← quita @default(now()) si lo tenías
   rfps      Rfp[]
 }
 
@@ -28,8 +28,21 @@ model Rfp {
   ownerId String
   owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 
+  // NUEVOS CAMPOS "planos"
+  companyName              String?
+  introFormal              String?
+  objetivos                String?
+  dolores                  String?
+  integraciones            String?
+  volumen                  String?
+  content                  String?
+  elementosPrevios         String?
+  necesidadesCuantificadas String?
+  aspectosGenerales        String?
+  calendarioPrevisto       String?
+
   // payload del brief: objetivos, dolores, volumen, integraciones, etc.
-  dataJson    Json?
+  dataJson    Json?    @default("{}")
   isPublished Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @default(now()) @updatedAt
@@ -76,7 +89,7 @@ model RfpEmbedding {
   chunkIndex Int
 
   // pgvector
-  vector Unsupported("vector")
+  vector Unsupported("vector(1536)")
 
   createdAt DateTime @default(now())
   Rfp       Rfp?     @relation(fields: [rfpId], references: [id])
@@ -114,39 +127,38 @@ model Module {
 }
 
 model Requirement {
-  id         String   @id @default(cuid())
-  rfpId      String
-  rfp        Rfp      @relation(fields: [rfpId], references: [id], onDelete: Cascade)
-  moduleId   String?
-  module     Module?  @relation(fields: [moduleId], references: [id])
-  title      String
-  body       String?
-  type       String           // "functional" | "nonfunctional"
-  category   Moscow
-  status     String   @default("active")
+  id          String   @id @default(cuid())
+  rfpId       String
+  rfp         Rfp      @relation(fields: [rfpId], references: [id], onDelete: Cascade)
+  moduleId    String?
+  module      Module?  @relation(fields: [moduleId], references: [id])
+  title       String
+  body        String?
+  type        String // "functional" | "nonfunctional"
+  category    Moscow
+  status      String   @default("active")
   createdById String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @default(now()) @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
 
-  embeddings RequirementEmbedding[]   // <— relación de retorno
+  embeddings RequirementEmbedding[] // <— relación de retorno
 
+  @@unique([rfpId, title, type]) // <— ESTA define la clave compuesta
   @@index([rfpId])
   @@index([moduleId])
   @@index([category])
   @@index([status])
-  @@unique([rfpId, title, type])      // <— ESTA define la clave compuesta
 }
 
-
 model RequirementEmbedding {
-  id        String   @id @default(cuid())
-  reqId     String
-  req       Requirement @relation(fields: [reqId], references: [id], onDelete: Cascade)
+  id    String      @id @default(cuid())
+  reqId String
+  req   Requirement @relation(fields: [reqId], references: [id], onDelete: Cascade)
 
-  model     String
-  dim      Int
+  model  String
+  dim    Int
   // Usa el mismo tipo que ya usas en RfpEmbedding (si usas Unsupported, mantenlo igual):
-  vector    Unsupported("vector(1536)")
+  vector Unsupported("vector(1536)")
   // Si tu RfpEmbedding usa vector(1536) fijo, puedes igualar la dimensión aquí.
 
   createdAt DateTime @default(now())
@@ -154,7 +166,6 @@ model RequirementEmbedding {
   @@index([reqId])
   @@index([model])
 }
-
 
 model ChecklistItem {
   id    String @id @default(cuid())

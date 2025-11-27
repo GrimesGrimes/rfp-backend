@@ -28,23 +28,34 @@ export async function chat(messages: ChatMessage[], temperature = 0.0): Promise<
   if (cached) return cached;
 
   const body = { model: MODEL, messages, temperature };
-  const resp = await fetch(`${BASE}/chat/completions`, {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify(body),
-  });
+  
+  try {
+    const resp = await fetch(`${BASE}/chat/completions`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify(body),
+    });
 
-  if (!resp.ok) {
-    const t = await resp.text();
-    throw new Error(`LLM error: ${resp.status} ${t}`);
+    if (!resp.ok) {
+      const t = await resp.text();
+      if (resp.status === 429) {
+        throw new Error("RATE_LIMIT: El modelo de IA alcanzó su límite de uso. Intenta nuevamente en unos minutos.");
+      }
+      throw new Error(`LLM error: ${resp.status} ${t}`);
+    }
+    
+    const json = await resp.json();
+    const out = (json?.choices?.[0]?.message?.content ?? "").trim();
+    
+    // Store in cache
+    await setCached(cacheKey, out);
+    return out;
+  } catch (err: any) {
+    if (err?.message?.includes("RATE_LIMIT")) {
+      throw err;
+    }
+    throw err;
   }
-  
-  const json = await resp.json();
-  const out = (json?.choices?.[0]?.message?.content ?? "").trim();
-  
-  // Store in cache
-  await setCached(cacheKey, out);
-  return out;
 }
 
 /** === Parsers tolerantes a texto con ruido === */
@@ -166,22 +177,57 @@ export async function suggestRequirements(input: {
   dolores: string;
   integraciones: string;
   volumen: string;
+  existing?: Array<{ title: string; body?: string | null }>; // 👈 NUEVO
 }): Promise<{ functional: any[]; nonfunctional: any[] }> {
+  const existingText =
+    input.existing && input.existing.length
+      ? `
+Requisitos que YA existen en este módulo (NO los repitas ni los reformules, y evita proponer requisitos que cubran exactamente el mismo objetivo):
+
+${input.existing
+        .slice(0, 25) // límite de 25 para no inflar demasiado el prompt
+        .map(
+          (r, idx) =>
+            `- R${idx + 1}: "${r.title}"${
+              r.body ? ` — ${String(r.body).slice(0, 160)}` : ""
+            }`
+        )
+        .join("\n")}
+`
+      : `
+Si el módulo ya tiene requisitos definidos en el RFP, NO los repitas ni propongas requisitos que cubran exactamente el mismo objetivo.
+`;
+
   const messages: ChatMessage[] = [
-    { role: "system", content: "Eres un analista de RFP. Devuelve SOLO un objeto JSON válido (sin comentarios, sin texto extra)." },
-    { role: "user", content:
-`Genera requisitos para el módulo "${input.moduleName}" (key: ${input.moduleKey})
+    {
+      role: "system",
+      content:
+        "Eres un analista de RFP. Devuelves SOLO un objeto JSON válido (sin comentarios, sin texto extra).",
+    },
+    {
+      role: "user",
+      content: `
+Genera requisitos para el módulo "${input.moduleName}" (key: ${input.moduleKey}).
+
 Contexto:
 - Objetivos: ${input.objetivos}
 - Dolores: ${input.dolores}
 - Integraciones: ${input.integraciones}
 - Volumen: ${input.volumen}
+${existingText}
+
+REGLAS OBLIGATORIAS:
+- NO repitas ni reformules los requisitos listados arriba.
+- Evita proponer requisitos que cubran exactamente el mismo objetivo, aunque cambie la redacción.
+- Propón solo requisitos NUEVOS y complementarios a los existentes.
 
 Devuelve JSON ESTRICTO:
 {
   "functional": [{"title":"...","body":"...","moscow":"wont|would|could|should"}],
   "nonfunctional": [{"title":"...","body":"...","moscow":"wont|would|could|should"}]
-}` }
+}
+`.trim(),
+    },
   ];
 
   // Intento 1
@@ -208,4 +254,171 @@ Devuelve JSON ESTRICTO:
 
   console.warn("[suggestRequirements] salida no-JSON del modelo, devolviendo vacío");
   return { functional: [], nonfunctional: [] };
+}
+
+// === Redacción de secciones del RFP (introducción, objetivos, etc.) ===
+
+export type RfpSectionKey =
+  | "intro"
+  | "objectives"
+  | "situation"
+  | "elements"
+  | "needs"
+  | "general"
+  | "calendar";
+
+export type RfpAiInput = {
+  companyName?: string;
+  name?: string;
+  title?: string;
+  nombre?: string;
+  objectives?: string;
+  objetivos?: string;
+  painPoints?: string;
+  dolores?: string;
+  scope?: string;
+  descripcion?: string;
+  description?: string;
+  notes?: string;
+  notas?: string;
+  modules?: Array<{ name?: string; description?: string }>;
+  fechaBase?: string; // ISO "YYYY-MM-DD"
+};
+
+function sectionTitle(key: RfpSectionKey): string {
+  switch (key) {
+    case "intro":       return "Introducción";
+    case "objectives":  return "Objetivos del proceso de contratación";
+    case "situation":   return "Descripción de la situación actual y futura";
+    case "elements":    return "Elementos previos a tener en cuenta";
+    case "needs":       return "Necesidades cuantificadas";
+    case "general":     return "Aspectos generales";
+    case "calendar":    return "Calendario previsto";
+  }
+}
+
+/**
+ * Genera texto para una sección del documento de RFP.
+ */
+export async function generateRfpSection(
+  section: RfpSectionKey,
+  rfp: RfpAiInput
+): Promise<string> {
+  const r: any = rfp || {};
+
+  const modulesText = (r.modules || [])
+    .map((m: any) => `- ${m.name ?? ""}: ${m.description ?? ""}`)
+    .join("\n");
+
+  const ctx = `
+Empresa: ${rfp.companyName ?? ""}
+Nombre del proyecto / RFP: ${rfp.name ?? rfp.title ?? rfp.nombre ?? ""}
+Objetivos declarados: ${rfp.objectives ?? rfp.objetivos ?? ""}
+Dolores / problemas actuales: ${rfp.painPoints ?? rfp.dolores ?? ""}
+Alcance o descripción: ${rfp.scope ?? rfp.descripcion ?? rfp.description ?? ""}
+Notas adicionales: ${rfp.notes ?? rfp.notas ?? ""}
+Fecha base: ${rfp.fechaBase ?? ""}
+
+Módulos / bloques funcionales:
+${modulesText || "- (sin módulos definidos todavía)"}
+`.trim();
+
+  const titulo = sectionTitle(section);
+
+  let instrucciones = "";
+
+  switch (section) {
+    case "intro":
+      instrucciones = `
+Redacta la sección "Introducción" de un documento de Solicitud de Propuesta (RFP).
+Tono: formal, claro y directo, en español neutro.
+No repitas títulos, solo escribe el texto en uno o dos párrafos.`.trim();
+      break;
+
+    case "objectives":
+      instrucciones = `
+Redacta la sección "Objetivos del proceso de contratación".
+Explica qué busca conseguir la empresa (mejora tecnológica, optimización de costes, etc.).
+Usa 2-3 párrafos, tono formal.`.trim();
+      break;
+
+    case "situation":
+      instrucciones = `
+Redacta la "Descripción de la situación actual y futura".
+Describe brevemente la situación actual, los problemas y la visión futura deseada.
+Usa 2-4 párrafos, en español formal.`.trim();
+      break;
+
+    case "elements":
+      instrucciones = `
+Redacta la sección "Elementos previos a tener en cuenta".
+Enumera en viñetas las particularidades relevantes para el proveedor (políticas internas, restricciones, etc.).`.trim();
+      break;
+
+    case "needs":
+      instrucciones = `
+Redacta la sección "Necesidades cuantificadas".
+Resume de forma estructurada los servicios a contratar y su posible evolución.
+Devuélvelo como lista de viñetas o texto estructurado (no hace falta tabla real).`.trim();
+      break;
+
+    case "general":
+      instrucciones = `
+Redacta la sección "Aspectos generales".
+Incluye consideraciones sobre cambio de proveedor, portabilidad, servicios asociados, etc., si aplica al contexto.
+Usa tono formal y orientado a proveedor.`.trim();
+      break;
+
+                case "calendar":
+      instrucciones = `
+Redacta la sección "Calendario previsto" de un RFP en español.
+
+Condiciones OBLIGATORIAS:
+- NO inventes nombres propios de personas, correos electrónicos ni nombres de proyectos.
+- Usa solo cargos genéricos: "Responsable de Compras", "Responsable de TI", "Comité Evaluador", "Gerencia General", etc.
+- No inventes el nombre de la empresa ni del proyecto salvo que venga explícitamente en el input.
+- Si en el input hay un campo "fechaBase" (formato "YYYY-MM-DD"):
+  - Todas las fechas concretas deben ser posteriores a esa fecha.
+  - Usa plazos razonables entre fases (recepción de propuestas, aclaraciones, demos, segunda propuesta, decisión final, firma e inicio del servicio).
+- Si NO hay "fechaBase":
+  - NO uses fechas de calendario tipo "15 de noviembre de 2024".
+  - Usa SOLO plazos relativos: "dentro de 10 días", "en las 2 semanas siguientes", "en un plazo máximo de 5 días hábiles", etc.
+
+Formato ESTRICTO de salida:
+- Devuelve ÚNICAMENTE una lista de viñetas Markdown.
+- Cada viñeta debe ser UNA FASE en una sola línea, con este formato:
+
+  - **Nombre de la fase**: descripción breve con plazos y responsables.
+
+  Ejemplos de nombres de fase: "Recepción de propuestas", "Rondas de preguntas y aclaraciones", "Demostraciones técnicas", "Segunda propuesta ajustada", "Decisión final y notificación", "Firma del contrato e inicio del servicio".
+
+- NO incluyas encabezados como "Calendario previsto".
+- NO uses "Hito 1", "Hito 2" ni numeraciones; solo nombres descriptivos de las fases.
+- NO añadas texto antes ni después de la lista de viñetas.
+`.trim();
+      break;
+  }
+
+  const messages: ChatMessage[] = [
+    {
+      role: "system",
+      content:
+        "Eres un consultor experto en redacción de RFP B2B. Escribes en español formal y claro. Respondes SOLO con el texto solicitado (o tabla Markdown), sin explicaciones adicionales."
+    },
+    {
+      role: "user",
+      content: `
+Datos del cliente y del proyecto:
+${ctx}
+
+Sección a redactar: "${titulo}".
+
+Instrucciones específicas:
+${instrucciones}
+`.trim(),
+    },
+  ];
+
+  const out = await chat(messages, 0.4);
+  return out.trim();
 }

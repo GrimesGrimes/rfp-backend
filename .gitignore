@@ -1,5 +1,31 @@
+# Dependencies
 node_modules
-# Keep environment variables out of version control
-.env
 
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Build output
+dist
+build
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Database
+/pgdata
+/postgres-data
+*.sqlite
+*.sqlite-journal
+
+# Prisma
 /generated/prisma
+
+# Editor / System
+.vscode
+.idea
+.DS_Store
+Thumbs.db

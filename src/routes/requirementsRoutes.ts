@@ -563,16 +563,6 @@ router.post("/:rfpId/suggest", requireAuth, async (req, res) => {
   const rfp = await prisma.rfp.findUnique({ where: { id: rfpId }});
   if (!rfp) return res.status(404).json({ error: "RFP not found" });
 
-  // Requisitos YA existentes en este módulo para este RFP
-  const existingReqs = await prisma.requirement.findMany({
-    where: {
-      rfpId,
-      module: { key: moduleKey },
-      status: "active",
-    },
-    select: { id: true, title: true, body: true, type: true, category: true },
-  });
-
   const d: any = rfp.dataJson || {};
   const ctx = {
     moduleKey,
@@ -581,10 +571,6 @@ router.post("/:rfpId/suggest", requireAuth, async (req, res) => {
     dolores: d.dolores || "",
     integraciones: d.integraciones || "",
     volumen: d.volumen || "",
-    existing: existingReqs.map((r) => ({
-      title: r.title,
-      body: r.body ?? "",
-    })),
   };
 
   // 1) IA (puede fallar o devolver vacío)
@@ -630,15 +616,15 @@ router.post("/:rfpId/suggest", requireAuth, async (req, res) => {
   let enriched = mixed.map((r) => ({ ...r }));
 
   try {
-    // Requisitos ya existentes para este RFP y módulo (reutilizamos los de arriba)
-    // const existingReqs = await prisma.requirement.findMany({
-    //   where: {
-    //     rfpId,
-    //     module: { key: moduleKey }, // si quieres contra todo el RFP, quita esta línea
-    //     status: "active",
-    //   },
-    //   select: { id: true, title: true, body: true, type: true, category: true },
-    // });
+    // Requisitos ya existentes para este RFP y módulo
+    const existingReqs = await prisma.requirement.findMany({
+      where: {
+        rfpId,
+        module: { key: moduleKey }, // si quieres contra todo el RFP, quita esta línea
+        status: "active",
+      },
+      select: { id: true, title: true, body: true, type: true, category: true },
+    });
 
     const hasSuggestions = enriched.length > 0;
     const hasExisting = existingReqs.length > 0;
@@ -1174,53 +1160,95 @@ Idioma de title y body: ${lang === "es" ? "español" : "inglés"}.
           select: { id: true, title: true, body: true },
         });
 
+        // Tokens título + body (más laxo)
         const existingTokens = existingReqs.map((r) =>
           textToTokens(`${r.title} ${r.body ?? ""}`)
         );
 
-        // Umbrales
-        const JACCARD_EXISTING = 0.35; // contra requisitos ya guardados
-        const JACCARD_WITHIN = 0.7;    // entre sugerencias del mismo batch
+        // Tokens SOLO de título (para no diluir la similitud)
+        const existingTitleTokens = existingReqs.map((r) =>
+          textToTokens(r.title)
+        );
+
+        // Títulos normalizados para match exacto
+        const existingTitleNorm = new Set(
+          existingReqs.map((r) => normalizeText(r.title))
+        );
+
+        // Umbrales (más agresivos)
+        const TITLE_JACCARD   = 0.5;  // títulos muy parecidos
+        const JACCARD_EXISTING = 0.28; // texto completo bastante parecido
+        const JACCARD_WITHIN   = 0.65; // dentro del mismo batch
 
         // 2.2 Limpiamos cada módulo sugerido
         for (const mod of suggestions) {
           const keep: typeof mod.requirements = [];
           const keepTokens: string[][] = [];
+          const keepTitleTokens: string[][] = [];
+          const keepTitleNorm: string[] = [];
 
           for (const req of mod.requirements) {
-            const tokens = textToTokens(`${req.title} ${req.body ?? ""}`);
+            const rawTitle = req.title || "";
+            const rawBody  = req.body  || "";
 
-            // (a) ¿Es muy parecido a ALGÚN requisito ya guardado en el RFP?
+            const titleNorm   = normalizeText(rawTitle);
+            const titleTokens = textToTokens(rawTitle);
+            const allTokens   = textToTokens(`${rawTitle} ${rawBody}`);
+
+            // (a) título exactamente igual a uno ya guardado
+            if (titleNorm && existingTitleNorm.has(titleNorm)) {
+              continue;
+            }
+
+            // (b) ¿muy parecido a ALGÚN requisito ya guardado en el RFP?
             let isDupExisting = false;
-            for (let j = 0; j < existingTokens.length; j++) {
-              const jac = jaccardSimilarity(tokens, existingTokens[j]);
-              if (jac >= JACCARD_EXISTING) {
+            for (let j = 0; j < existingReqs.length; j++) {
+              const jacTitle = jaccardSimilarity(
+                titleTokens,
+                existingTitleTokens[j]
+              );
+              const jacFull = jaccardSimilarity(
+                allTokens,
+                existingTokens[j]
+              );
+
+              if (jacTitle >= TITLE_JACCARD || jacFull >= JACCARD_EXISTING) {
                 isDupExisting = true;
                 break;
               }
             }
-            if (isDupExisting) {
-              // lo descartamos
-              continue;
-            }
+            if (isDupExisting) continue;
 
-            // (b) ¿Es muy parecido a OTRA sugerencia que ya aceptamos en este batch?
+            // (c) ¿duplicado respecto a OTRA sugerencia ya aceptada en este batch?
             let isDupWithin = false;
-            for (let j = 0; j < keepTokens.length; j++) {
-              const jac = jaccardSimilarity(tokens, keepTokens[j]);
-              if (jac >= JACCARD_WITHIN) {
+            for (let j = 0; j < keep.length; j++) {
+              // título igual
+              if (titleNorm && keepTitleNorm[j] === titleNorm) {
+                isDupWithin = true;
+                break;
+              }
+
+              const jacTitle = jaccardSimilarity(
+                titleTokens,
+                keepTitleTokens[j]
+              );
+              const jacFull = jaccardSimilarity(
+                allTokens,
+                keepTokens[j]
+              );
+
+              if (jacTitle >= TITLE_JACCARD || jacFull >= JACCARD_WITHIN) {
                 isDupWithin = true;
                 break;
               }
             }
-            if (isDupWithin) {
-              // también lo descartamos
-              continue;
-            }
+            if (isDupWithin) continue;
 
-            // (c) Si pasó ambos filtros, lo mantenemos
+            // (d) Si pasó todos los filtros, lo mantenemos
             keep.push(req);
-            keepTokens.push(tokens);
+            keepTokens.push(allTokens);
+            keepTitleTokens.push(titleTokens);
+            keepTitleNorm.push(titleNorm);
           }
 
           mod.requirements = keep;

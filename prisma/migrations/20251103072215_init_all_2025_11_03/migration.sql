@@ -1,29 +1,59 @@
-/*
-  Warnings:
+-- Habilitar pgvector para esta BD (también vale en la shadow DB)
+CREATE EXTENSION IF NOT EXISTS vector;
 
-  - You are about to drop the column `heading` on the `RfpSection` table. All the data in the column will be lost.
-  - Added the required column `updatedAt` to the `RfpSection` table without a default value. This is not possible if the table is not empty.
-  - Added the required column `updatedAt` to the `User` table without a default value. This is not possible if the table is not empty.
-
-*/
 -- CreateEnum
 CREATE TYPE "Moscow" AS ENUM ('wont', 'would', 'could', 'should');
 
--- AlterTable
-ALTER TABLE "Rfp" ALTER COLUMN "dataJson" DROP NOT NULL,
-ALTER COLUMN "updatedAt" SET DEFAULT CURRENT_TIMESTAMP;
+-- CreateTable
+CREATE TABLE "User" (
+    "id" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "name" TEXT,
+    "hash" TEXT NOT NULL DEFAULT '',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
 
--- AlterTable
-ALTER TABLE "RfpEmbedding" ADD COLUMN     "rfpId" TEXT;
+    CONSTRAINT "User_pkey" PRIMARY KEY ("id")
+);
 
--- AlterTable
-ALTER TABLE "RfpSection" DROP COLUMN "heading",
-ADD COLUMN     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-ADD COLUMN     "updatedAt" TIMESTAMP(3) NOT NULL;
+-- CreateTable
+CREATE TABLE "Rfp" (
+    "id" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "ownerId" TEXT NOT NULL,
+    "dataJson" JSONB,
+    "isPublished" BOOLEAN NOT NULL DEFAULT false,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
--- AlterTable
-ALTER TABLE "User" ADD COLUMN     "updatedAt" TIMESTAMP(3) NOT NULL,
-ALTER COLUMN "hash" SET DEFAULT '';
+    CONSTRAINT "Rfp_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "RfpSection" (
+    "id" TEXT NOT NULL,
+    "rfpId" TEXT NOT NULL,
+    "index" INTEGER NOT NULL,
+    "content" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "RfpSection_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "RfpEmbedding" (
+    "id" TEXT NOT NULL,
+    "sectionId" TEXT NOT NULL,
+    "model" TEXT NOT NULL,
+    "dim" INTEGER NOT NULL,
+    "chunkIndex" INTEGER NOT NULL,
+    "vector" vector NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "rfpId" TEXT,
+
+    CONSTRAINT "RfpEmbedding_pkey" PRIMARY KEY ("id")
+);
 
 -- CreateTable
 CREATE TABLE "Module" (
@@ -44,15 +74,27 @@ CREATE TABLE "Requirement" (
     "rfpId" TEXT NOT NULL,
     "moduleId" TEXT,
     "title" TEXT NOT NULL,
-    "body" TEXT NOT NULL,
+    "body" TEXT,
     "type" TEXT NOT NULL,
-    "category" "Moscow" NOT NULL DEFAULT 'should',
+    "category" "Moscow" NOT NULL,
     "status" TEXT NOT NULL DEFAULT 'active',
     "createdById" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "Requirement_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "RequirementEmbedding" (
+    "id" TEXT NOT NULL,
+    "reqId" TEXT NOT NULL,
+    "model" TEXT NOT NULL,
+    "dim" INTEGER NOT NULL,
+    "vector" vector(1536) NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "RequirementEmbedding_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -116,6 +158,24 @@ CREATE TABLE "AiCache" (
 );
 
 -- CreateIndex
+CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
+
+-- CreateIndex
+CREATE INDEX "Rfp_ownerId_idx" ON "Rfp"("ownerId");
+
+-- CreateIndex
+CREATE INDEX "RfpSection_rfpId_idx" ON "RfpSection"("rfpId");
+
+-- CreateIndex
+CREATE INDEX "RfpSection_index_idx" ON "RfpSection"("index");
+
+-- CreateIndex
+CREATE INDEX "RfpEmbedding_model_idx" ON "RfpEmbedding"("model");
+
+-- CreateIndex
+CREATE INDEX "RfpEmbedding_sectionId_idx" ON "RfpEmbedding"("sectionId");
+
+-- CreateIndex
 CREATE INDEX "Module_rfpId_idx" ON "Module"("rfpId");
 
 -- CreateIndex
@@ -137,6 +197,12 @@ CREATE INDEX "Requirement_status_idx" ON "Requirement"("status");
 CREATE UNIQUE INDEX "Requirement_rfpId_title_type_key" ON "Requirement"("rfpId", "title", "type");
 
 -- CreateIndex
+CREATE INDEX "RequirementEmbedding_reqId_idx" ON "RequirementEmbedding"("reqId");
+
+-- CreateIndex
+CREATE INDEX "RequirementEmbedding_model_idx" ON "RequirementEmbedding"("model");
+
+-- CreateIndex
 CREATE INDEX "ChecklistItem_rfpId_idx" ON "ChecklistItem"("rfpId");
 
 -- CreateIndex
@@ -154,14 +220,14 @@ CREATE INDEX "LibraryRequirementEmbedding_model_idx" ON "LibraryRequirementEmbed
 -- CreateIndex
 CREATE INDEX "LibraryRequirementEmbedding_reqId_idx" ON "LibraryRequirementEmbedding"("reqId");
 
--- CreateIndex
-CREATE INDEX "Rfp_ownerId_idx" ON "Rfp"("ownerId");
+-- AddForeignKey
+ALTER TABLE "Rfp" ADD CONSTRAINT "Rfp_ownerId_fkey" FOREIGN KEY ("ownerId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
--- CreateIndex
-CREATE INDEX "RfpSection_rfpId_idx" ON "RfpSection"("rfpId");
+-- AddForeignKey
+ALTER TABLE "RfpSection" ADD CONSTRAINT "RfpSection_rfpId_fkey" FOREIGN KEY ("rfpId") REFERENCES "Rfp"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
--- CreateIndex
-CREATE INDEX "RfpSection_index_idx" ON "RfpSection"("index");
+-- AddForeignKey
+ALTER TABLE "RfpEmbedding" ADD CONSTRAINT "RfpEmbedding_sectionId_fkey" FOREIGN KEY ("sectionId") REFERENCES "RfpSection"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "RfpEmbedding" ADD CONSTRAINT "RfpEmbedding_rfpId_fkey" FOREIGN KEY ("rfpId") REFERENCES "Rfp"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -176,6 +242,9 @@ ALTER TABLE "Requirement" ADD CONSTRAINT "Requirement_rfpId_fkey" FOREIGN KEY ("
 ALTER TABLE "Requirement" ADD CONSTRAINT "Requirement_moduleId_fkey" FOREIGN KEY ("moduleId") REFERENCES "Module"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "RequirementEmbedding" ADD CONSTRAINT "RequirementEmbedding_reqId_fkey" FOREIGN KEY ("reqId") REFERENCES "Requirement"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "ChecklistItem" ADD CONSTRAINT "ChecklistItem_rfpId_fkey" FOREIGN KEY ("rfpId") REFERENCES "Rfp"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -183,22 +252,3 @@ ALTER TABLE "LibraryRequirement" ADD CONSTRAINT "LibraryRequirement_moduleId_fke
 
 -- AddForeignKey
 ALTER TABLE "LibraryRequirementEmbedding" ADD CONSTRAINT "LibraryRequirementEmbedding_reqId_fkey" FOREIGN KEY ("reqId") REFERENCES "LibraryRequirement"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- Extensión pgvector (idempotente)
-CREATE EXTENSION IF NOT EXISTS vector;
-
--- Si tu columna vector NO quedó creada con dimensión fija,
--- puedes forzarla: (comenta si ya está en vector(1536))
--- ALTER TABLE "RequirementEmbedding" ALTER COLUMN "vector" TYPE vector(1536);
-
--- Índices auxiliares RequirementEmbedding
-CREATE INDEX IF NOT EXISTS "RequirementEmbedding_req_idx" ON "RequirementEmbedding" ("reqId");
-CREATE INDEX IF NOT EXISTS "RequirementEmbedding_model_idx" ON "RequirementEmbedding" ("model");
-
--- Índice ivfflat para RequirementEmbedding (L2)
-CREATE INDEX IF NOT EXISTS "req_embedding_vector_l2_idx"
-ON "RequirementEmbedding" USING ivfflat (vector vector_l2_ops) WITH (lists = 100);
-
--- Índice ivfflat para RfpEmbedding (L2) — el que causaba el drift
-CREATE INDEX IF NOT EXISTS "rfp_embedding_vector_l2_idx"
-ON "RfpEmbedding" USING ivfflat (vector vector_l2_ops) WITH (lists = 100);

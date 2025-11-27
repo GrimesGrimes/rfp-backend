@@ -1,5 +1,6 @@
--- Asegura pgvector antes de crear tablas con columnas 'vector'
+-- Habilita pgvector en esta BD (también aplica a la shadow DB)
 CREATE EXTENSION IF NOT EXISTS vector;
+
 -- CreateTable
 CREATE TABLE "User" (
     "id" TEXT NOT NULL,

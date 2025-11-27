@@ -13,12 +13,40 @@ router.post("/register", async (req, res) => {
   if (!body.success) return res.status(400).json(body.error);
 
   const { email, password, name } = body.data;
+  
+  // Verificar si el usuario ya existe
   const exists = await prisma.user.findUnique({ where: { email } });
   if (exists) return res.status(409).json({ error: "email in use" });
 
+  // Crear usuario
   const hash = await bcrypt.hash(password, 10);
-  const user = await prisma.user.create({ data: { email, hash, name } });
-  return res.json({ id: user.id });
+  const user = await prisma.user.create({ 
+    data: { 
+      email, 
+      hash, 
+      name 
+    } 
+  });
+
+  // Generar token JWT (mismo formato que en login)
+  const token = jwt.sign(
+    { 
+      sub: user.id,
+      email: user.email
+    },
+    process.env.JWT_SECRET!,
+    { expiresIn: "7d" }
+  );
+
+  // Devolver respuesta consistente
+  return res.json({ 
+    token,
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name
+    }
+  });
 });
 
 const Login = z.object({ email: z.string().email(), password: z.string().min(6) });

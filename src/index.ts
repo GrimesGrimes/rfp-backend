@@ -14,11 +14,14 @@ import authRouter from "./routes/auth";
 import rfpRouter from "./routes/rfp";
 import searchRouter from "./routes/search"; 
 import { ensurePgVectorIndex } from "./db/init";
+import { prisma } from "./lib/prisma"; // 👈 importa tu singleton
 import { requireAuth } from "./middleware/auth";
 import aiRouter from "./routes/ai";
 import modulesRouter from "./routes/modules";
 import requirementsRouter from "./routes/requirements";
 import aiStreamRouter from "./routes/ai.stream";
+import requirementsRoutes from "./routes/requirementsRoutes";
+
 
 const app = express();
 const env = getEnv();
@@ -38,13 +41,13 @@ app.get("/healthz", (_req, res) => res.json({ ok: true }));
 app.get("/readyz", (_req, res) => res.json({ ok: true }));
 
 app.use("/auth", authRouter);
-app.use("/rfp", requireAuth, rfpRouter);
+app.use("/rfp", rfpRouter);
 app.use("/search", requireAuth, searchRouter);
 app.use("/ai", requireAuth, aiRouter);
 app.use("/modules", requireAuth, modulesRouter);
 app.use("/requirements", requireAuth, requirementsRouter);
 app.use("/ai/stream", requireAuth, aiStreamRouter);
-
+app.use("/requirements", requireAuth, requirementsRoutes);
 // error handler (last)
 app.use(errorMiddleware);
 
@@ -52,7 +55,8 @@ const port = Number(process.env.PORT || 3001);
 
 async function boot() {
   try {
-    await ensurePgVectorIndex();
+    await ensurePgVectorIndex(prisma); // 👈 pásale el cliente
+
     // cualquier otro warmup que quieras
 
   } catch (e) {

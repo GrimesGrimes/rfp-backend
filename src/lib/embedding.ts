@@ -109,4 +109,27 @@ export async function embedText(
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
+export function cosineSimilarity(vecA: number[], vecB: number[]): number {
+  // Por seguridad, usamos la longitud mínima
+  const len = Math.min(vecA.length, vecB.length);
+  if (!len) return 0;
+
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+
+  for (let i = 0; i < len; i++) {
+    const a = vecA[i] ?? 0;
+    const b = vecB[i] ?? 0;
+    dot += a * b;
+    normA += a * a;
+    normB += b * b;
+  }
+
+  const magA = Math.sqrt(normA);
+  const magB = Math.sqrt(normB);
+
+  return magA && magB ? dot / (magA * magB) : 0;
+}
+
 
