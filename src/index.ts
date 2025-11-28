@@ -12,7 +12,7 @@ import { errorMiddleware } from "./middleware/error";
 
 import authRouter from "./routes/auth";
 import rfpRouter from "./routes/rfp";
-import searchRouter from "./routes/search"; 
+import searchRouter from "./routes/search";
 import { ensurePgVectorIndex } from "./db/init";
 import { prisma } from "./lib/prisma"; // 👈 importa tu singleton
 import { requireAuth } from "./middleware/auth";
@@ -30,10 +30,34 @@ app.use(helmet());
 app.use(compression());
 app.use(pino());
 app.use(rateLimit({ windowMs: 60_000, max: 120 }));
-app.use(cors({
-  origin: env.CORS_ORIGIN.split(",").map(s => s.trim()),
-  credentials: false
-}));
+const allowedOrigins = [
+  // Lo que venga del .env (puede ser una lista separada por comas)
+  ...env.CORS_ORIGIN.split(",").map((s) => s.trim()),
+
+  // Aseguramos explícitamente tu frontend en Railway
+  "https://rfp-frontend-production.up.railway.app",
+
+  // Y orígenes de desarrollo
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+];
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      // origin puede ser undefined en algunos clientes (curl, Postman...)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      console.warn("[CORS] Origin no permitido:", origin);
+      return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true, // por si en el futuro usas cookies o auth con credenciales
+  })
+);
 
 app.use(express.json({ limit: "10mb" }));
 
