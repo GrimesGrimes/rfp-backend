@@ -26,6 +26,9 @@ import requirementsRoutes from "./routes/requirementsRoutes";
 const app = express();
 const env = getEnv();
 
+app.set("trust proxy", 1); // Confía en el proxy de Railway para IPs
+
+
 app.use(helmet());
 app.use(compression());
 app.use(pino());
